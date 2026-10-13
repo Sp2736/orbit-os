@@ -1,0 +1,77 @@
+import { create } from "zustand";
+import { DEFAULT_OBSERVER } from "@/config/os";
+import type { Observer, ViewState } from "@/lib/astro/types";
+
+export interface SyscallEntry {
+  t: number;
+  name: string;
+  args: string;
+  result: string;
+}
+
+export interface Overlays {
+  constellations: boolean;
+  labels: boolean;
+  gridAltAz: boolean;
+  gridEquatorial: boolean;
+  planets: boolean;
+  ground: boolean;
+  nightMode: boolean;
+}
+
+interface SkyState {
+  booted: boolean;
+  observer: Observer;
+  view: ViewState;
+  selectedId: string | null;
+  searchOpen: boolean;
+  syscallOpen: boolean;
+  overlays: Overlays;
+  // throttled mirrors of the clock (the real clock lives in lib/astro/clock.ts)
+  displayTimeMs: number;
+  rate: number;
+  playing: boolean;
+  syscalls: SyscallEntry[];
+
+  setBooted: (v: boolean) => void;
+  setObserver: (o: Observer) => void;
+  setView: (v: Partial<ViewState>) => void;
+  select: (id: string | null) => void;
+  setSearchOpen: (v: boolean) => void;
+  setSyscallOpen: (v: boolean) => void;
+  toggleOverlay: (k: keyof Overlays) => void;
+  setClockMirror: (m: { displayTimeMs?: number; rate?: number; playing?: boolean }) => void;
+  pushSyscall: (e: SyscallEntry) => void;
+}
+
+export const useSkyStore = create<SkyState>((set) => ({
+  booted: false,
+  observer: DEFAULT_OBSERVER,
+  view: { az: 180, alt: 45, fov: 90 },
+  selectedId: null,
+  searchOpen: false,
+  syscallOpen: false,
+  overlays: {
+    constellations: true,
+    labels: true,
+    gridAltAz: false,
+    gridEquatorial: false,
+    planets: true,
+    ground: true,
+    nightMode: false,
+  },
+  displayTimeMs: Date.now(),
+  rate: 1,
+  playing: true,
+  syscalls: [],
+
+  setBooted: (booted) => set({ booted }),
+  setObserver: (observer) => set({ observer }),
+  setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
+  select: (selectedId) => set({ selectedId }),
+  setSearchOpen: (searchOpen) => set({ searchOpen }),
+  setSyscallOpen: (syscallOpen) => set({ syscallOpen }),
+  toggleOverlay: (k) => set((s) => ({ overlays: { ...s.overlays, [k]: !s.overlays[k] } })),
+  setClockMirror: (m) => set(m),
+  pushSyscall: (e) => set((s) => ({ syscalls: [...s.syscalls.slice(-199), e] })),
+}));

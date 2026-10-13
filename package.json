@@ -1,0 +1,51 @@
+{
+  "name": "astraos-navigator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OrbitOS Navigator - Stellarium-style star map and OS shell mockup for the fictional OrbitOS (OS course project).",
+  "author": "Swayam G. Patel",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "npx serve out -l 3000",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:catalog": "node scripts/build-catalog.mjs",
+    "electron": "electron .",
+    "electron:kiosk": "electron . --kiosk",
+    "electron:dev": "concurrently -k \"npm:dev\" \"wait-on http://localhost:3000 && cross-env ASTRA_DEV=1 electron .\"",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "astronomy-engine": "^2.1.19",
+    "fuse.js": "^7.5.0",
+    "next": "^16.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "serve": "^14.2.4",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.4",
+    "wait-on": "^9.5.1"
+  },
+  "build": {
+    "appId": "edu.charusat.astraos.navigator",
+    "productName": "OrbitOS Navigator",
+    "files": ["electron/**/*", "out/**/*", "package.json"],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Education"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# next / build output
+.next/
+out/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# agent instruction docs (local only)
+/docs
+
+# generated catalog data (rebuilt by npm run build:catalog)
+public/data/*.json
+public/data/*.bin
+!public/data/.gitkeep
+scripts/.cache/
+
+# env / OS / editor
+.env*
+.DS_Store
+.vscode/
+.idea/
+npm-debug.log*
