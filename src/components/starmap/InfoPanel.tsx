@@ -7,8 +7,10 @@ import { clock } from "@/lib/astro/clock";
 import { slew } from "@/lib/astro/slew";
 import { bvToColor } from "@/lib/astro/color";
 import { DESCRIPTIONS } from "@/data/descriptions";
+import { ObjectImage } from "./ObjectImage";
 import { useSkyStore } from "@/store/useSkyStore";
 import type { SkyObject, Observer } from "@/lib/astro/types";
+
 
 function formatRA(raDeg: number): string {
   const raHours = ((raDeg / 15) % 24 + 24) % 24;
@@ -227,7 +229,10 @@ export default function InfoPanel() {
         </div>
       )}
 
+      <ObjectImage id={o.id} object={o} />
+
       {description && <div className="info-desc">{description}</div>}
+
 
       <table>
         <tbody>
