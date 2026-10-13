@@ -17,6 +17,8 @@ export default function LeftRail() {
   const overlays = useSkyStore((s) => s.overlays);
   const toggle = useSkyStore((s) => s.toggleOverlay);
   const setSearchOpen = useSkyStore((s) => s.setSearchOpen);
+  const setObserverOpen = useSkyStore((s) => s.setObserverOpen);
+  const setHelpOpen = useSkyStore((s) => s.setHelpOpen);
 
   return (
     <nav className="rail">
@@ -30,6 +32,8 @@ export default function LeftRail() {
           {label}
         </button>
       ))}
+      <button onClick={() => setObserverOpen(true)} title="Set observer coordinates">Location</button>
+      <button onClick={() => setHelpOpen(true)} title="Keyboard shortcuts (?)">Help ?</button>
     </nav>
   );
 }

@@ -5,15 +5,33 @@ import { clock, RATES } from "@/lib/astro/clock";
 import { equatorialToHorizontal, projectHorizontal, stereographicScale } from "@/lib/astro/projection";
 import { lstDeg } from "@/lib/astro/time";
 import { bvToColor } from "@/lib/astro/color";
-import { getStars } from "@/lib/astro/catalog";
+import {
+  getStarCatalog,
+  getDeepSkyCatalog,
+  getConstellations,
+  computeViewMatrix,
+  getMagLimitForFov,
+  getStarCutoffIndex,
+} from "@/lib/astro/catalogLoader";
+import {
+  getSunHorizontal,
+  drawSkyBackground,
+  drawGround,
+  drawEcliptic,
+  drawGrids,
+  drawMoon,
+  drawPlanet,
+} from "@/lib/astro/skyRender";
 import { solarSystemObjects } from "@/lib/astro/bodies";
+import { findObject, horizontalOf } from "@/lib/astro/catalog";
 import { slew } from "@/lib/astro/slew";
+
 import { sys } from "@/lib/os/syscalls";
 import { useSkyStore } from "@/store/useSkyStore";
 
 // ── constants (named + units) ─────────────────────────────────────────────────
 const HIT_RADIUS_PX = 14;       // pixels – click-selection radius
-const HIT_BUFFER_SIZE = 4096;   // objects – preallocated hit buffer (task 1.4)
+const HIT_BUFFER_SIZE = 8192;   // objects – preallocated hit buffer (task 1.4, 2.3)
 const MIRROR_INTERVAL_MS = 250; // ms – throttle for React clock mirror
 const FOV_MIN_DEG = 0.5;        // degrees (task 1.5)
 const FOV_MAX_DEG = 150;        // degrees (task 1.5)
@@ -51,7 +69,6 @@ export default function SkyCanvas() {
     const ctx    = canvas.getContext("2d")!;
     let w = 0, h = 0, raf = 0, lastMirror = 0;
     let hitCount = 0; // live entries in the preallocated hit buffer this frame
-    const stars = getStars();
 
     // ── resize ────────────────────────────────────────────────────────────────
     const resize = () => {
@@ -81,17 +98,69 @@ export default function SkyCanvas() {
       slew.tick(now);
       if (slew.active) {
         st.setView({ az: slew.az, alt: slew.alt, fov: slew.fov });
+      } else if (st.tracking && st.selectedId) {
+        const msNow = clock.now();
+        const selObj = findObject(st.selectedId, msNow, st.observer);
+        if (selObj) {
+          const selHz = horizontalOf(selObj, msNow, st.observer);
+          st.setView({ az: selHz.azDeg, alt: selHz.altDeg });
+        }
       }
 
       const ms = clock.now();
+
       const { view, observer, overlays, selectedId } = useSkyStore.getState();
       const lst   = lstDeg(ms, observer.lon);
       const night = overlays.nightMode;
       const fg    = night ? "#ff8a7a" : "#cfe3ff";
+      const s     = stereographicScale(h, view.fov);
+      const halfW = w / 2;
+      const halfH = h / 2;
 
-      // ── background ──────────────────────────────────────────────────────────
-      ctx.fillStyle = night ? "#080202" : "#02040a";
-      ctx.fillRect(0, 0, w, h);
+      // ── sun position & sky background (phase 3 tasks 3.2, 3.4) ─────────────
+      const sunHor = getSunHorizontal(ms, observer);
+      const { starAlpha } = drawSkyBackground(ctx, sunHor.altDeg, w, h, night);
+
+      // ── grids (alt/az and equatorial) ───────────────────────────────────────
+      drawGrids(ctx, overlays, observer, lst, view, w, h, night);
+
+      // ── ecliptic line (passes through planets) ──────────────────────────────
+      drawEcliptic(ctx, observer, lst, view, w, h, night);
+
+      // ── constellation lines (phase 3 task 3.1) ──────────────────────────────
+      if (overlays.constellations) {
+        const cons = getConstellations();
+        if (cons) {
+          ctx.strokeStyle = night ? "#3a1a16" : "#1a2c47";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (const f of cons.lines) {
+            for (const seg of f.segments) {
+              const hz1 = equatorialToHorizontal(seg[0], seg[1], observer.lat, lst);
+              const hz2 = equatorialToHorizontal(seg[2], seg[3], observer.lat, lst);
+              const p1  = projectHorizontal(hz1.altDeg, hz1.azDeg, view, w, h);
+              const p2  = projectHorizontal(hz2.altDeg, hz2.azDeg, view, w, h);
+              if (p1.visible && p2.visible) {
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+              }
+            }
+          }
+          ctx.stroke();
+
+          if (overlays.labels) {
+            ctx.fillStyle = night ? "#6a2e26" : "#2d4b73";
+            ctx.font = "11px monospace";
+            for (const lbl of cons.labels) {
+              const hz = equatorialToHorizontal(lbl.raDeg, lbl.decDeg, observer.lat, lst);
+              const p  = projectHorizontal(hz.altDeg, hz.azDeg, view, w, h);
+              if (p.visible) {
+                ctx.fillText(lbl.name.toUpperCase(), p.x - 16, p.y);
+              }
+            }
+          }
+        }
+      }
 
       // ── horizon line + cardinal labels ──────────────────────────────────────
       ctx.strokeStyle = night ? "#4a1410" : "#1c2a4a";
@@ -111,52 +180,190 @@ export default function SkyCanvas() {
         const p = projectHorizontal(0, az, view, w, h);
         if (p.visible) ctx.fillText(label, p.x - 4, p.y - 6);
       }
-      // TODO(agent): ground fill, alt/az + equatorial grids, constellation lines (docs/07-ui-spec.md)
 
-      // ── object drawing (task 1.4: write into preallocated buffers) ───────────
-      hitCount = 0;
-
-      const draw = (
-        id: string,
-        name: string,
-        raDeg: number,
-        decDeg: number,
-        r: number,
-        color: string,
-        label: boolean,
-      ) => {
-        const hz = equatorialToHorizontal(raDeg, decDeg, observer.lat, lst);
-        const p  = projectHorizontal(hz.altDeg, hz.azDeg, view, w, h);
-        if (!p.visible) return;
-        ctx.globalAlpha = hz.altDeg < 0 ? 0.35 : 1;
-        ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
-        if (id === selectedId) {
-          ctx.strokeStyle = "#5ec8ff";
-          ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.arc(p.x, p.y, r + 7, 0, Math.PI * 2); ctx.stroke();
-        }
-        if (label && overlays.labels) { ctx.fillStyle = fg; ctx.fillText(name, p.x + r + 4, p.y + 4); }
-        ctx.globalAlpha = 1;
-
-        // Write into preallocated buffers (task 1.4 – no per-frame allocation)
-        if (hitCount < HIT_BUFFER_SIZE) {
-          hitIds[hitCount] = id;
-          hitX[hitCount]   = p.x;
-          hitY[hitCount]   = p.y;
-          hitCount++;
-        }
-      };
-
-      for (const s of stars) {
-        draw(s.id, s.name, s.raDeg, s.decDeg, Math.max(0.9, 3.4 - s.mag * 0.6), night ? "#ff8a7a" : bvToColor(s.bv), s.mag < 2.5);
+      // ── ground fill (task 3.2: occludes stars below horizon when enabled) ───
+      if (overlays.ground) {
+        drawGround(ctx, view, w, h, night);
       }
 
+      // ── object drawing: typed-array path with magnitude cutoff (task 2.3) ───
+      hitCount = 0;
+
+      const vm = computeViewMatrix(observer.lat, lst, view.az, view.alt);
+      const starCat = getStarCatalog();
+      if (starCat && starAlpha > 0) {
+        const magLimit = getMagLimitForFov(view.fov);
+        const cutoff   = getStarCutoffIndex(magLimit);
+
+        ctx.font = "11px monospace";
+        for (let i = 0; i < cutoff; i++) {
+          const sx = starCat.ux[i];
+          const sy = starCat.uy[i];
+          const sz = starCat.uz[i];
+
+          const cosc = vm.rz0 * sx + vm.rz1 * sy + vm.rz2 * sz;
+          if (cosc <= -0.999) continue;
+
+          const pxRaw = vm.rx0 * sx + vm.rx1 * sy + vm.rx2 * sz;
+          const pyRaw = vm.ry0 * sx + vm.ry1 * sy + vm.ry2 * sz;
+
+          const k  = 2 / (1 + cosc);
+          const px = halfW + (k * pxRaw) * s;
+          const py = halfH - (k * pyRaw) * s;
+
+          if (px < -10 || px > w + 10 || py < -10 || py > h + 10) continue;
+
+          const sinAlt = vm.m20 * sx + vm.m21 * sy + vm.m22 * sz;
+          if (overlays.ground && sinAlt < 0) continue; // Occlude below horizon
+
+          const mag = starCat.mag[i];
+          const r   = Math.max(0.8, 3.4 - mag * 0.45);
+
+          // Atmospheric extinction near horizon (task 3.7: dim low stars)
+          let alpha = starAlpha;
+          if (sinAlt > 0 && sinAlt < 0.25) {
+            alpha *= (0.4 + sinAlt * 2.4);
+          } else if (sinAlt <= 0) {
+            alpha *= 0.35;
+          }
+
+          ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+          ctx.fillStyle   = night ? "#ff8a7a" : bvToColor(starCat.bv[i]);
+          ctx.beginPath();
+          ctx.arc(px, py, r, 0, Math.PI * 2);
+          ctx.fill();
+
+          const id = starCat.ids[i];
+          if (id === selectedId) {
+            ctx.strokeStyle = "#5ec8ff";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(px, py, r + 7, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          if (overlays.labels && mag < 2.5 && starCat.names[i]) {
+            ctx.fillStyle = fg;
+            ctx.fillText(starCat.names[i], px + r + 4, py + 4);
+          }
+
+          if (hitCount < HIT_BUFFER_SIZE) {
+            hitIds[hitCount] = id;
+            hitX[hitCount]   = px;
+            hitY[hitCount]   = py;
+            hitCount++;
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // ── deep-sky objects (typed-array path) ─────────────────────────────────
+      const dsoCat = getDeepSkyCatalog();
+      if (dsoCat && starAlpha > 0.3) {
+        const magLimit = getMagLimitForFov(view.fov);
+        for (let i = 0; i < dsoCat.count; i++) {
+          const isMessier = dsoCat.mNums[i] !== null;
+          const mag = dsoCat.mag[i];
+          if (!isMessier && mag > magLimit) continue;
+
+          const sx = dsoCat.ux[i];
+          const sy = dsoCat.uy[i];
+          const sz = dsoCat.uz[i];
+
+          const cosc = vm.rz0 * sx + vm.rz1 * sy + vm.rz2 * sz;
+          if (cosc <= -0.999) continue;
+
+          const pxRaw = vm.rx0 * sx + vm.rx1 * sy + vm.rx2 * sz;
+          const pyRaw = vm.ry0 * sx + vm.ry1 * sy + vm.ry2 * sz;
+
+          const k  = 2 / (1 + cosc);
+          const px = halfW + (k * pxRaw) * s;
+          const py = halfH - (k * pyRaw) * s;
+
+          if (px < -15 || px > w + 15 || py < -15 || py > h + 15) continue;
+
+          const sinAlt = vm.m20 * sx + vm.m21 * sy + vm.m22 * sz;
+          if (overlays.ground && sinAlt < 0) continue;
+
+          const id = dsoCat.ids[i];
+          ctx.strokeStyle = night ? "#e06050" : "#60a5fa";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(px, py, 4, 0, Math.PI * 2);
+          ctx.stroke();
+
+          if (id === selectedId) {
+            ctx.strokeStyle = "#5ec8ff";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(px, py, 11, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          if (overlays.labels && (isMessier || mag < 8)) {
+            ctx.fillStyle = night ? "#e08070" : "#93c5fd";
+            ctx.fillText(dsoCat.names[i] || id, px + 7, py + 4);
+          }
+
+          if (hitCount < HIT_BUFFER_SIZE) {
+            hitIds[hitCount] = id;
+            hitX[hitCount]   = px;
+            hitY[hitCount]   = py;
+            hitCount++;
+          }
+        }
+      }
+
+      // ── solar-system bodies (tasks 3.5, 3.6) ────────────────────────────────
       if (overlays.planets) {
         for (const b of solarSystemObjects(ms, observer)) {
-          const r = b.kind === "sun" ? 9 : b.kind === "moon" ? 8 : 4;
-          const c = b.kind === "sun" ? "#ffd86b" : b.kind === "moon" ? "#e8e8e8" : "#ffb86b";
-          draw(b.id, b.name, b.raDeg, b.decDeg, r, c, true);
+          const hz = equatorialToHorizontal(b.raDeg, b.decDeg, observer.lat, lst);
+          const p  = projectHorizontal(hz.altDeg, hz.azDeg, view, w, h);
+          if (!p.visible) continue;
+          if (overlays.ground && hz.altDeg < 0) continue;
+
+          if (b.kind === "sun") {
+            // Sun: radiant yellow disc with atmospheric glow
+            const grad = ctx.createRadialGradient(p.x, p.y, 4, p.x, p.y, 24);
+            grad.addColorStop(0, "#fff59d");
+            grad.addColorStop(0.3, "rgba(255, 238, 88, 0.8)");
+            grad.addColorStop(1, "rgba(255, 214, 0, 0)");
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 24, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = "#fff9c4";
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (b.kind === "moon") {
+            // Moon: illumination phase and orientation (task 3.5)
+            drawMoon(ctx, p.x, p.y, 9, new Date(ms), night);
+          } else {
+            // Planet: distinct colors and Saturn ring (task 3.6)
+            drawPlanet(ctx, b.id, p.x, p.y, night);
+          }
+
+          if (b.id === selectedId) {
+            ctx.strokeStyle = "#5ec8ff";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          if (overlays.labels) {
+            ctx.fillStyle = fg;
+            ctx.fillText(b.name, p.x + 12, p.y + 4);
+          }
+
+          if (hitCount < HIT_BUFFER_SIZE) {
+            hitIds[hitCount] = b.id;
+            hitX[hitCount]   = p.x;
+            hitY[hitCount]   = p.y;
+            hitCount++;
+          }
         }
       }
 
@@ -208,19 +415,22 @@ export default function SkyCanvas() {
       }
 
       if (!dragging) return;
+      const st = useSkyStore.getState();
+      if (st.tracking) st.setTracking(false);
       const dx = e.clientX - lx;
       const dy = e.clientY - ly;
       lx = e.clientX;
       ly = e.clientY;
       moved += Math.abs(dx) + Math.abs(dy);
 
-      const { view } = useSkyStore.getState();
+      const { view } = st;
       const degPerPx = view.fov / h;
-      useSkyStore.getState().setView({
+      st.setView({
         az:  wrapAz(view.az - dx * degPerPx),   // task 1.5
         alt: clampAlt(view.alt + dy * degPerPx), // task 1.5
       });
     };
+
 
     const onUp = (e: PointerEvent) => {
       pointers.delete(e.pointerId);
@@ -304,6 +514,7 @@ export default function SkyCanvas() {
       const st = useSkyStore.getState();
       if (st.searchOpen || e.target instanceof HTMLInputElement) return;
 
+      const k = e.key.toLowerCase();
       const step = st.view.fov / 12;
       if (e.key === "ArrowLeft") {
         slew.cancel();
@@ -326,13 +537,47 @@ export default function SkyCanvas() {
       } else if (e.key === " ") {
         e.preventDefault();
         clock.playing = !clock.playing;
+        st.setClockMirror({ playing: clock.playing });
         sys("sys_clock_set", { playing: String(clock.playing) });
       } else if (e.key === "]" || e.key === "[") {
-        const i = RATES.indexOf(Math.abs(clock.rate));
+        const curAbs = Math.abs(clock.rate);
+        const i = RATES.indexOf(curAbs);
         const j = Math.max(0, Math.min(RATES.length - 1, i + (e.key === "]" ? 1 : -1)));
         clock.rate = Math.sign(clock.rate || 1) * RATES[j];
+        st.setClockMirror({ rate: clock.rate });
         sys("sys_clock_set", { rate: clock.rate });
+      } else if (k === "r") {
+        clock.rate = -clock.rate;
+        st.setClockMirror({ rate: clock.rate });
+        sys("sys_clock_set", { rate: clock.rate, action: "reverse" });
+      } else if (k === "n") {
+        clock.jumpToNow();
+        st.setClockMirror({ displayTimeMs: clock.now(), rate: clock.rate, playing: clock.playing });
+        sys("sys_clock_set", { action: "now" });
+      } else if (k === "c") {
+        st.toggleOverlay("constellations");
+        sys("sys_display_set", { layer: "constellations" });
+      } else if (k === "l") {
+        st.toggleOverlay("labels");
+        sys("sys_display_set", { layer: "labels" });
+      } else if (k === "g") {
+        st.toggleOverlay("gridAltAz");
+        st.toggleOverlay("gridEquatorial");
+        sys("sys_display_set", { layer: "grids" });
+      } else if (k === "m") {
+        st.toggleOverlay("nightMode");
+        sys("sys_display_set", { layer: "nightMode" });
+      } else if (k === "t") {
+        st.toggleTracking();
+        sys("sys_display_set", { tracking: String(!st.tracking) });
+      } else if (e.key === "?") {
+        e.preventDefault();
+        st.setHelpOpen(!st.helpOpen);
+      } else if (e.key === "/" && !st.searchOpen) {
+        e.preventDefault();
+        st.setSearchOpen(true);
       }
+
     };
     window.addEventListener("keydown", onKey);
 

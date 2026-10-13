@@ -10,6 +10,8 @@ import LeftRail from "@/components/starmap/LeftRail";
 import TimeBar from "@/components/starmap/TimeBar";
 import InfoPanel from "@/components/starmap/InfoPanel";
 import SearchPalette from "@/components/starmap/SearchPalette";
+import ObserverDialog from "@/components/starmap/ObserverDialog";
+import HelpOverlay from "@/components/starmap/HelpOverlay";
 
 export default function Home() {
   const booted = useSkyStore((s) => s.booted);
@@ -29,6 +31,8 @@ export default function Home() {
       <SyscallLog />
       <AlertToast />
       <SearchPalette />
+      <ObserverDialog />
+      <HelpOverlay />
     </main>
   );
 }

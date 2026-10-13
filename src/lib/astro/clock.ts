@@ -34,4 +34,27 @@ class SimClock {
 
 export const clock = new SimClock();
 
-export const RATES = [1, 10, 100, 1000, 10000, 100000];
+export interface RateOption {
+  value: number;
+  label: string;
+}
+
+export const RATE_OPTIONS: RateOption[] = [
+  { value: 1, label: "x1" },
+  { value: 10, label: "x10" },
+  { value: 60, label: "1 min/s" },
+  { value: 600, label: "10 min/s" },
+  { value: 3600, label: "1 hr/s" },
+  { value: 86400, label: "1 day/s" },
+  { value: 604800, label: "1 wk/s" },
+];
+
+export const RATES = RATE_OPTIONS.map((o) => o.value);
+
+export function formatRateLabel(rate: number): string {
+  const abs = Math.abs(rate);
+  const sign = rate < 0 ? "REV " : "";
+  const match = RATE_OPTIONS.find((o) => o.value === abs);
+  if (match) return `${sign}${match.label}`;
+  return `${sign}x${abs}`;
+}
