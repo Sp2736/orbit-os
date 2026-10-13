@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { clock } from "@/lib/astro/clock";
 import { getAllObjects, horizontalOf } from "@/lib/astro/catalog";
 import { buildSearchIndex } from "@/lib/search";
+import { slew } from "@/lib/astro/slew";
 import { sys } from "@/lib/os/syscalls";
 import { useSkyStore } from "@/store/useSkyStore";
 import type { SkyObject } from "@/lib/astro/types";
@@ -36,8 +37,8 @@ export default function SearchPalette() {
     const st = useSkyStore.getState();
     const hz = horizontalOf(o, clock.now(), observer);
     st.select(o.id);
-    // TODO(agent): smooth slew animation instead of an instant jump
-    st.setView({ az: hz.azDeg, alt: Math.max(-89, Math.min(89, hz.altDeg)) });
+    // Smooth 600 ms slew to the object (task 1.1)
+    slew.start(st.view, { az: hz.azDeg, alt: hz.altDeg }, performance.now());
     sys("sys_query_catalog", { q, id: o.id });
     setOpen(false);
     setQ("");

@@ -67,7 +67,14 @@ export const useSkyStore = create<SkyState>((set) => ({
 
   setBooted: (booted) => set({ booted }),
   setObserver: (observer) => set({ observer }),
-  setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
+  setView: (v) =>
+    set((s) => ({
+      view: {
+        az:  (((((v.az  ?? s.view.az)  % 360) + 360) % 360)),
+        alt: Math.max(-89, Math.min(89,  v.alt ?? s.view.alt)),
+        fov: Math.max(0.5, Math.min(150, v.fov ?? s.view.fov)),
+      },
+    })),
   select: (selectedId) => set({ selectedId }),
   setSearchOpen: (searchOpen) => set({ searchOpen }),
   setSyscallOpen: (syscallOpen) => set({ syscallOpen }),
