@@ -12,6 +12,7 @@
     "start": "npx serve out -l 3000",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "prebuild": "node scripts/build-catalog.mjs --if-missing",
     "build:catalog": "node scripts/build-catalog.mjs",
     "electron": "electron .",
     "electron:kiosk": "electron . --kiosk",

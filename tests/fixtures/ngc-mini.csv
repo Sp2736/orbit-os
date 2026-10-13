@@ -1,0 +1,4 @@
+Name;Type;RA;Dec;MajAx;MinAx;PosAng;B-Mag;V-Mag;J-Mag;H-Mag;K-Mag;SurfBr;Hubble;Pax;Pax_err;RadVel;RadVel_err;Redshift;Redshift_err;Cstar_U;Cstar_B;Cstar_V;M;NGC;IC;CstarNames;Identifiers;Common names;NED notes;OpenNGC notes;Const;Neighbours;SimbadName;NED name
+NGC0224;G;00 42 44.33;+41 16 07.5;192.4;62.2;35;4.36;3.44;;;;;;;;-301;4;-0.000692;0.0;;;;31;224;;;PGC002557;Andromeda Galaxy;;;And;;NGC 0224;MESSIER 031
+NGC1952;SNR;05 34 31.97;+22 00 52.1;7;5;;8.4;8.4;;;;;;;;;;;;;;;1;1952;;;PGC055269;Crab Nebula;;;Tau;;NGC 1952;MESSIER 001
+IC0434;HII;05 41 00.0;-02 24 00;50;;;;;;;;;;;;;;;;;;;;;434;;;Horsehead region;;;Ori;;;

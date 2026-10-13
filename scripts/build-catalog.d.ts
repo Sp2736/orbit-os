@@ -1,0 +1,11 @@
+export function parseCsvRow(line: string): string[];
+export function parseSemiRow(line: string): string[];
+export function parseRA(s: string): number;
+export function parseDec(s: string): number;
+export function parseRASex(s: string): number;
+export function parseDecSex(s: string): number;
+export function parseHygRow(cols: string[], hdr: Record<string, number>): any;
+export function parseNgcRow(cols: string[], hdr: Record<string, number>): any;
+export function buildAliases(stars: any[], dsos: any[], extra: Record<string, string>): { aliases: Record<string, string>; xref: Record<string, Record<string, string>> };
+export function normalizeQuery(input: string): string;
+export const CON_NAMES: Record<string, string>;

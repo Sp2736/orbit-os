@@ -11,7 +11,9 @@ export interface SkyObject {
   distanceLy?: number;
   constellation?: string;
   designations?: string[];
+  spectralClass?: string;
 }
+
 
 export interface Observer {
   name: string;
