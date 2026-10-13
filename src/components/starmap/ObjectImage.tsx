@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSkyStore } from "@/store/useSkyStore";
 import { getXref } from "@/lib/astro/catalogLoader";
 import type { SkyObject } from "@/lib/astro/types";
@@ -43,51 +43,63 @@ async function getUrlsMap(): Promise<Record<string, { image: string; thumb: stri
   return fetchPromise;
 }
 
-// Verified high-resolution public NASA/mission imagery for Solar System bodies
-const SOLAR_SYSTEM_IMAGES: Record<string, { image: string; source: string }> = {
+// Local bundled assets + verified public telemetry fallbacks for Solar System bodies
+const SOLAR_SYSTEM_IMAGES: Record<
+  string,
+  { local: string; fallback: string; source: string }
+> = {
   sun: {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b4/The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg/512px-The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg",
+    local: "/images/bodies/sun.jpg",
+    fallback:
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b4/The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg/500px-The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg",
     source: "NASA SDO / AIA",
   },
   moon: {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/FullMoon2010.jpg/512px-FullMoon2010.jpg",
+    local: "/images/bodies/moon.jpg",
+    fallback:
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e1/FullMoon2010.jpg/500px-FullMoon2010.jpg",
     source: "NASA / GSFC / LRO",
   },
   "planet:mercury": {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Mercury_in_true_color.jpg/512px-Mercury_in_true_color.jpg",
+    local: "/images/bodies/mercury.jpg",
+    fallback:
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4a/Mercury_in_true_color.jpg/500px-Mercury_in_true_color.jpg",
     source: "NASA / JHUAPL / MESSENGER",
   },
   "planet:venus": {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Venus-real_color.jpg/512px-Venus-real_color.jpg",
+    local: "/images/bodies/venus.jpg",
+    fallback:
+      "https://upload.wikimedia.org/wikipedia/commons/0/08/Venus_from_Mariner_10.jpg",
     source: "NASA / Mariner 10",
   },
   "planet:mars": {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/OSIRIS_Mars_true_color.jpg/512px-OSIRIS_Mars_true_color.jpg",
+    local: "/images/bodies/mars.jpg",
+    fallback:
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/OSIRIS_Mars_true_color.jpg/500px-OSIRIS_Mars_true_color.jpg",
     source: "ESA / OSIRIS / NASA",
   },
   "planet:jupiter": {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/Jupiter.jpg/512px-Jupiter.jpg",
+    local: "/images/bodies/jupiter.jpg",
+    fallback:
+      "https://upload.wikimedia.org/wikipedia/commons/e/e2/Jupiter.jpg",
     source: "NASA / JPL / Cassini",
   },
   "planet:saturn": {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Saturn_during_Equinox.jpg/512px-Saturn_during_Equinox.jpg",
+    local: "/images/bodies/saturn.jpg",
+    fallback:
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c7/Saturn_during_Equinox.jpg/500px-Saturn_during_Equinox.jpg",
     source: "NASA / JPL / Cassini",
   },
   "planet:uranus": {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Uranus2.jpg/512px-Uranus2.jpg",
+    local: "/images/bodies/uranus.jpg",
+    fallback:
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/Uranus_Voyager2_color_calibrated.png/500px-Uranus_Voyager2_color_calibrated.png",
     source: "NASA / JPL / Voyager 2",
   },
   "planet:neptune": {
-    image:
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Neptune.jpg/512px-Neptune.jpg",
+    local: "/images/bodies/neptune.jpg",
+    fallback:
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b9/Neptune_Voyager2_color_calibrated.png/500px-Neptune_Voyager2_color_calibrated.png",
     source: "NASA / JPL / Voyager 2",
   },
 };
@@ -116,64 +128,161 @@ function dynamicDss2Url(raDeg: number, decDeg: number, fov = 0.2, px = 512): str
   return `https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=CDS%2FP%2FDSS2%2Fcolor&width=${px}&height=${px}&fov=${fov}&projection=TAN&ra=${raDeg.toFixed(5)}&dec=${decDeg.toFixed(5)}&format=jpg`;
 }
 
+/** Construct dynamic 2MASS infrared cutout URL as a secondary celestial fallback. */
+function dynamic2MassUrl(raDeg: number, decDeg: number, fov = 0.2, px = 512): string {
+  return `https://alasky.cds.unistra.fr/hips-image-services/hips2fits?hips=CDS%2FP%2F2MASS%2Fcolor&width=${px}&height=${px}&fov=${fov}&projection=TAN&ra=${raDeg.toFixed(5)}&dec=${decDeg.toFixed(5)}&format=jpg`;
+}
+
+interface ImageCandidate {
+  url: string;
+  source: string;
+}
+
+/** Resolve prioritized list of candidate image URLs for any celestial object. */
+function getCandidates(
+  id: string,
+  object?: SkyObject,
+  urlsMap: Record<string, { image: string; thumb: string }> = {}
+): ImageCandidate[] {
+  const candidates: ImageCandidate[] = [];
+
+  // 1. Solar System bodies
+  const solar = SOLAR_SYSTEM_IMAGES[id];
+  if (solar) {
+    if (solar.local) {
+      candidates.push({ url: solar.local, source: `${solar.source} (Telemetry)` });
+    }
+    if (solar.fallback) {
+      candidates.push({ url: solar.fallback, source: solar.source });
+    }
+    return candidates;
+  }
+
+  // 2. Direct hit in urls.json catalog
+  const directEntry = urlsMap[id];
+  if (directEntry?.image) {
+    candidates.push({
+      url: sanitizeHipsUrl(directEntry.image),
+      source: "CDS Strasbourg / DSS2 Survey",
+    });
+  }
+
+  // 3. Cross-reference lookup (e.g. ngc:4594 -> messier:104, messier:31 -> ngc:224)
+  const xref = getXref();
+  if (xref) {
+    let crossId: string | undefined;
+    if (id.startsWith("ngc:")) {
+      crossId = xref.ngc?.[id.slice(4)];
+    } else if (id.startsWith("messier:")) {
+      crossId = xref.messier?.[id.slice(8)];
+    } else if (id.startsWith("ic:")) {
+      crossId = xref.ic?.[id.slice(3)];
+    }
+    if (crossId && urlsMap[crossId]?.image) {
+      candidates.push({
+        url: sanitizeHipsUrl(urlsMap[crossId].image),
+        source: "CDS Strasbourg / DSS2 Survey",
+      });
+    }
+  }
+
+  // 4. Designations lookup (e.g. "M 104" or "NGC 4594" in object.designations)
+  if (object?.designations) {
+    for (const d of object.designations) {
+      const trimmed = d.trim().toLowerCase();
+      const mMatch = trimmed.match(/^m\s*(\d+)$/);
+      if (mMatch) {
+        const mKey = `messier:${mMatch[1]}`;
+        if (urlsMap[mKey]?.image) {
+          candidates.push({
+            url: sanitizeHipsUrl(urlsMap[mKey].image),
+            source: "CDS Strasbourg / DSS2 Survey",
+          });
+        }
+      }
+      const ngcMatch = trimmed.match(/^ngc\s*(\d+)$/);
+      if (ngcMatch) {
+        const ngcKey = `ngc:${ngcMatch[1]}`;
+        if (urlsMap[ngcKey]?.image) {
+          candidates.push({
+            url: sanitizeHipsUrl(urlsMap[ngcKey].image),
+            source: "CDS Strasbourg / DSS2 Survey",
+          });
+        }
+      }
+      const icMatch = trimmed.match(/^ic\s*(\d+)$/);
+      if (icMatch) {
+        const icKey = `ic:${icMatch[1]}`;
+        if (urlsMap[icKey]?.image) {
+          candidates.push({
+            url: sanitizeHipsUrl(urlsMap[icKey].image),
+            source: "CDS Strasbourg / DSS2 Survey",
+          });
+        }
+      }
+    }
+  }
+
+  // 5. Dynamic Cutouts for ANY celestial object with coordinates (stars, DSOs, etc.)
+  if (object && !isNaN(object.raDeg) && !isNaN(object.decDeg)) {
+    const isStar = object.kind === "star";
+    const fov = isStar ? 0.15 : 0.35;
+
+    // Primary dynamic cutout: DSS2 color survey
+    candidates.push({
+      url: dynamicDss2Url(object.raDeg, object.decDeg, fov),
+      source: isStar ? "CDS Strasbourg / DSS2 Optical" : "CDS Strasbourg / DSS2 Survey",
+    });
+
+    // Secondary dynamic cutout: 2MASS infrared survey
+    candidates.push({
+      url: dynamic2MassUrl(object.raDeg, object.decDeg, fov),
+      source: "CDS Strasbourg / 2MASS Infrared",
+    });
+  }
+
+  // Deduplicate candidates by URL
+  const seen = new Set<string>();
+  return candidates.filter((c) => {
+    if (!c.url || seen.has(c.url)) return false;
+    seen.add(c.url);
+    return true;
+  });
+}
+
 export function ObjectImage({ id, size = 256, object }: ObjectImageProps) {
   const [urls, setUrls] = useState<Record<string, { image: string; thumb: string }>>(
     cachedUrls || {}
   );
+  const [candidateIndex, setCandidateIndex] = useState(0);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const nightMode = useSkyStore((s) => s.overlays.nightMode);
 
+  // Load catalog URLs in background if not already cached
   useEffect(() => {
-    setFailed(false);
-    setLoading(true);
     if (!cachedUrls) {
       getUrlsMap().then((m) => {
         setUrls(m);
       });
     }
+  }, []);
+
+  // Reset candidate state when active object changes
+  useEffect(() => {
+    setCandidateIndex(0);
+    setLoading(true);
+    setFailed(false);
   }, [id]);
 
-  // 1. Check Solar System bodies
-  const solar = SOLAR_SYSTEM_IMAGES[id];
-  let imageUrl = "";
-  let sourceText = "DSS2 via CDS Strasbourg";
+  const candidates = useMemo(() => {
+    return getCandidates(id, object, urls);
+  }, [id, object, urls]);
 
-  if (solar) {
-    imageUrl = solar.image;
-    sourceText = solar.source;
-  } else {
-    // 2. Direct hit in urls.json
-    let entry = urls[id];
+  const currentCandidate = candidates[candidateIndex];
 
-    // 3. Cross-reference lookup (e.g. ngc:4594 -> messier:104)
-    if (!entry) {
-      const xref = getXref();
-      if (xref) {
-        if (id.startsWith("ngc:")) {
-          const mId = xref.ngc?.[id.slice(4)];
-          if (mId && urls[mId]) entry = urls[mId];
-        } else if (id.startsWith("messier:")) {
-          const mNum = id.slice(8);
-          const ngcId = xref.messier?.[mNum];
-          if (ngcId && urls[ngcId]) entry = urls[ngcId];
-        } else if (id.startsWith("ic:")) {
-          const mId = xref.ic?.[id.slice(3)];
-          if (mId && urls[mId]) entry = urls[mId];
-        }
-      }
-    }
-
-    if (entry) {
-      imageUrl = sanitizeHipsUrl(entry.image);
-    } else if (object && !isNaN(object.raDeg) && !isNaN(object.decDeg)) {
-      // 4. Dynamic DSS2 cutout for any celestial body with coordinates
-      imageUrl = dynamicDss2Url(object.raDeg, object.decDeg);
-    }
-  }
-
-  if (!imageUrl || failed) {
+  if (!currentCandidate || failed) {
     return (
       <div
         className="img-missing"
@@ -291,13 +400,19 @@ export function ObjectImage({ id, size = 256, object }: ObjectImageProps) {
           )}
 
           <img
-            src={imageUrl}
+            key={currentCandidate.url}
+            src={currentCandidate.url}
             alt={object?.name || id}
             loading="lazy"
             onLoad={() => setLoading(false)}
             onError={() => {
-              setLoading(false);
-              setFailed(true);
+              if (candidateIndex + 1 < candidates.length) {
+                // Seamlessly advance to the next candidate fallback
+                setCandidateIndex((idx) => idx + 1);
+              } else {
+                setLoading(false);
+                setFailed(true);
+              }
             }}
             style={{
               width: "100%",
@@ -321,7 +436,7 @@ export function ObjectImage({ id, size = 256, object }: ObjectImageProps) {
             background: "rgba(10, 16, 32, 0.7)",
           }}
         >
-          <span>{sourceText}</span>
+          <span>{currentCandidate.source}</span>
           <span style={{ opacity: 0.7 }}>J2000 OPTICAL</span>
         </figcaption>
       </figure>
@@ -366,7 +481,7 @@ export function ObjectImage({ id, size = 256, object }: ObjectImageProps) {
                 }}
               >
                 <img
-                  src={imageUrl}
+                  src={currentCandidate.url}
                   alt={object?.name || id}
                   style={{ width: "100%", height: "100%", objectFit: "contain" }}
                 />
@@ -381,7 +496,7 @@ export function ObjectImage({ id, size = 256, object }: ObjectImageProps) {
                   padding: "0 4px",
                 }}
               >
-                <span>SURVEY: {sourceText}</span>
+                <span>SURVEY: {currentCandidate.source}</span>
                 {object && (
                   <span>
                     RA: {(object.raDeg / 15).toFixed(3)}h · Dec: {object.decDeg.toFixed(3)}°
