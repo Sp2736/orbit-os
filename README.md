@@ -160,3 +160,12 @@ Catalogs are generated at build time and bundled, so the app makes no network re
 ## License
 
 MIT for this project's code. Third-party data keeps its own license.
+
+
+---
+
+## 📦 Project Snapshot
+
+<!--ARCHIVE_STATS_START-->
+<!-- auto-generated — do not edit manually -->
+<!--ARCHIVE_STATS_END-->
